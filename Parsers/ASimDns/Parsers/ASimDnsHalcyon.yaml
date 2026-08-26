@@ -33,8 +33,11 @@ ParserParams:
   - Name: disabled
     Type: bool
     Default: false
+  - Name: pack
+    Type: bool
+    Default: false
 ParserQuery: |
-  let parser = (disabled:bool=false) {
+  let parser = (disabled:bool=false, pack:bool=false) {
       // DNS query class name -> numeric class ID lookup (standard DNS CLASS values).
       let DnsClassLookup = datatable(DnsQueryClassName:string, DnsQueryClass:int)
       [
@@ -105,10 +108,14 @@ ParserQuery: |
           EventVendor     = "Halcyon",
           EventSchema     = "Dns",
           EventSchemaVersion = "0.1.7",
-          AdditionalFields = bag_pack(
-                                "halcyon_dxp_rule",  tostring(unmapped.halcyon_dxp_rule),
-                                "halcyon_alert_id",  tostring(unmapped.halcyon_alert_id),
-                                "halcyon_tenant_id", tostring(unmapped.halcyon_tenant_id)
+          AdditionalFields = iff(
+                                pack,
+                                bag_pack(
+                                    "halcyon_dxp_rule",  tostring(unmapped.halcyon_dxp_rule),
+                                    "halcyon_alert_id",  tostring(unmapped.halcyon_alert_id),
+                                    "halcyon_tenant_id", tostring(unmapped.halcyon_tenant_id)
+                                ),
+                                dynamic([])
                             )
       // Project only ASIM Dns/Common output columns (avoids project-away so new source columns don't leak into output).
       | project
@@ -125,6 +132,7 @@ ParserQuery: |
           SrcUserId,
           SrcProcessName,
           SrcProcessId,
+          SrcProcessCommandLine,
           DvcId,
           EventOriginalSeverity,
           DvcHostname,
@@ -163,4 +171,4 @@ ParserQuery: |
           EventSchemaVersion,
           AdditionalFields
   };
-  parser(disabled=disabled)
+  parser(disabled=disabled, pack=pack)

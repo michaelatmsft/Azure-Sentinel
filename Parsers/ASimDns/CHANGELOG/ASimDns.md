@@ -1,5 +1,9 @@
 # Changelog for ASimDns.yaml
 
+## Version 0.5.3
+
+- (2026-06-09) Added the Halcyon DNS parser to the source-agnostic union - [PR #14606](https://github.com/Azure/Azure-Sentinel/pull/14606)
+
 ## Version 0.5.2
 
 - (2024-07-19) ASimDnsMicrosoftSysmon.yaml-22 - [PR #10611](https://github.com/Azure/Azure-Sentinel/pull/10611)
@@ -19,4 +23,3 @@
 ## Version 0.1
 
 - (2021-08-30) param parsers, ASim parsers, custom table - [PR #2878](https://github.com/Azure/Azure-Sentinel/pull/2878)
-

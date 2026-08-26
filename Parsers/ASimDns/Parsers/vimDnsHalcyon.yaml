@@ -57,8 +57,11 @@ ParserParams:
   - Name: disabled
     Type: bool
     Default: false
+  - Name: pack
+    Type: bool
+    Default: false
 ParserQuery: |
-  let parser = (starttime:datetime=datetime(null), endtime:datetime=datetime(null), srcipaddr:string='*', domain_has_any:dynamic=dynamic([]), responsecodename:string='*', response_has_ipv4:string='*', response_has_any_prefix:dynamic=dynamic([]), eventtype:string='Query', disabled:bool=false) {
+  let parser = (starttime:datetime=datetime(null), endtime:datetime=datetime(null), srcipaddr:string='*', domain_has_any:dynamic=dynamic([]), responsecodename:string='*', response_has_ipv4:string='*', response_has_any_prefix:dynamic=dynamic([]), eventtype:string='Query', disabled:bool=false, pack:bool=false) {
       // DNS query class name -> numeric class ID lookup (standard DNS CLASS values).
       let DnsClassLookup = datatable(DnsQueryClassName:string, DnsQueryClass:int)
       [
@@ -69,16 +72,14 @@ ParserQuery: |
           and class_uid == 4003                                    // OCSF DnsActivity (constant for class 4003)
           and (isnull(starttime) or TimeGenerated >= starttime)
           and (isnull(endtime)   or TimeGenerated <= endtime)
+          and (eventtype == '*' or eventtype =~ 'lookup' or eventtype =~ 'Query')
+          and srcipaddr == '*'
       // Halcyon DNS events are always queries (activity_id == 1). The ASIM Dns EventType enum is
       // Query|Status|Notify|Update|DNS Stateful Operations (no Response/Traffic), so all records normalize to "Query".
-      | extend EventType = "Query"
-      // eventtype filter compares against the computed EventType.
       // 'lookup' is a legacy DNS eventtype alias accepted as match-all for compatibility; the imDns union does not pass it by default.
-      | where (eventtype == '*' or eventtype =~ 'lookup' or EventType =~ eventtype)
       // Pushdown filters on raw fields.
       // srcipaddr is not applicable - Halcyon DNS events carry hostname/uid only, no source IP.
       // Short-circuit: if a caller filters by source IP, return no rows rather than unfiltered data.
-      | where srcipaddr == '*'
       | where (array_length(domain_has_any) == 0 or tostring(query.hostname) has_any (domain_has_any))
       // answers is a single-object dynamic array {rdata,type,class}; read answers[0].rdata (do not serialize the whole array).
       // response_has_any_prefix is matched per answer family: IPv4 (A) via has_any_ipv4_prefix, IPv6 (AAAA) via ipv6_is_in_any_range.
@@ -87,12 +88,14 @@ ParserQuery: |
           or (tostring(answers[0].type) == "A"    and has_any_ipv4_prefix(tostring(answers[0].rdata), response_has_any_prefix))
           or (tostring(answers[0].type) == "AAAA" and ipv6_is_in_any_range(tostring(answers[0].rdata), response_has_any_prefix)))
       | where (response_has_ipv4 == '*' or has_ipv4(tostring(answers[0].rdata), response_has_ipv4))
+      | extend DnsResponseCodeName = coalesce(tostring(rcode), tostring(_ASIM_LookupDnsResponseCode(toint(rcode_id))))
+      | where (responsecodename == '*' or DnsResponseCodeName =~ responsecodename)
       | extend DnsQueryClassName = coalesce(tostring(query.['class']), "IN")           // OCSF query.class (constant "IN")
       | lookup kind=leftouter DnsClassLookup on DnsQueryClassName
       | extend
+          EventType           = "Query",
           DnsQuery            = tostring(query.hostname),                              // OCSF query.hostname
           DnsResponseCode     = toint(rcode_id),                                       // OCSF rcode_id (constant 0 = NoError; resolution succeeded)
-          DnsResponseCodeName = coalesce(tostring(rcode), tostring(_ASIM_LookupDnsResponseCode(toint(rcode_id)))),  // Halcyon emits rcode "NoError"; datatable fallback on rcode_id
           DnsResponseName     = tostring(answers[0].rdata),
           SrcUsername         = tostring(actor.user.name),
           SrcUserId           = tostring(actor.user.uid),
@@ -102,7 +105,6 @@ ParserQuery: |
           DvcHostname_raw     = tostring(device.hostname),
           DvcId               = tostring(device.uid),
           EventOriginalSeverity = tostring(severity)
-      | where (responsecodename == '*' or DnsResponseCodeName =~ responsecodename)
       | invoke _ASIM_ResolveDvcFQDN('DvcHostname_raw')
       | extend
           EventSubType    = case(activity_id == 1, "Request", activity_id == 2, "Response", "Request"),
@@ -149,10 +151,14 @@ ParserQuery: |
           EventVendor     = "Halcyon",
           EventSchema     = "Dns",
           EventSchemaVersion = "0.1.7",
-          AdditionalFields = bag_pack(
-                                "halcyon_dxp_rule",  tostring(unmapped.halcyon_dxp_rule),
-                                "halcyon_alert_id",  tostring(unmapped.halcyon_alert_id),
-                                "halcyon_tenant_id", tostring(unmapped.halcyon_tenant_id)
+          AdditionalFields = iff(
+                                pack,
+                                bag_pack(
+                                    "halcyon_dxp_rule",  tostring(unmapped.halcyon_dxp_rule),
+                                    "halcyon_alert_id",  tostring(unmapped.halcyon_alert_id),
+                                    "halcyon_tenant_id", tostring(unmapped.halcyon_tenant_id)
+                                ),
+                                dynamic([])
                             )
       // Project only ASIM Dns/Common output columns (avoids project-away so new source columns don't leak into output).
       | project
@@ -169,6 +175,7 @@ ParserQuery: |
           SrcUserId,
           SrcProcessName,
           SrcProcessId,
+          SrcProcessCommandLine,
           DvcId,
           EventOriginalSeverity,
           DvcHostname,
@@ -207,4 +214,4 @@ ParserQuery: |
           EventSchemaVersion,
           AdditionalFields
   };
-  parser(starttime=starttime, endtime=endtime, srcipaddr=srcipaddr, domain_has_any=domain_has_any, responsecodename=responsecodename, response_has_ipv4=response_has_ipv4, response_has_any_prefix=response_has_any_prefix, eventtype=eventtype, disabled=disabled)
+  parser(starttime=starttime, endtime=endtime, srcipaddr=srcipaddr, domain_has_any=domain_has_any, responsecodename=responsecodename, response_has_ipv4=response_has_ipv4, response_has_any_prefix=response_has_any_prefix, eventtype=eventtype, disabled=disabled, pack=pack)
